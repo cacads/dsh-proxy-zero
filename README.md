@@ -286,7 +286,7 @@ dsh plugin --profile desktop remove dsh-proxy-zero
 
 ---
 
-## 九、Harness 包解析（实现要点）
+## 八、Harness 包解析（实现要点）
 
 `@deepseek-ai/dsh-http-proxy` 只存在于安装目录的 `app.asar` 内，**不在 profile 的 `node_modules` 里**；而 asar 归档对 ESM 解析器不透明。实测结论：
 
@@ -303,7 +303,7 @@ dsh plugin --profile desktop remove dsh-proxy-zero
 
 ---
 
-## 十、文件清单
+## 九、文件清单
 
 ```
 index.js                插件本体（无依赖、纯 ESM）
