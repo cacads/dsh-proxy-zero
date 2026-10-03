@@ -1,0 +1,9 @@
+node_modules/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+*.log
+.DS_Store
+Thumbs.db
+
+# 指纹是"某台机器某一次装卸"的实测留档，含本机路径，不进仓库。
+fingerprints/

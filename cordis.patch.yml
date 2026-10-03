@@ -1,0 +1,12 @@
+# dsh-proxy-zero bundle layer.
+#
+# One row, id `dsh-proxy-zero`. Every config field has a "do nothing" default:
+# with no `proxyUrl` the plugin falls back to the launcher's proxy environment
+# and then to the enabled Windows system proxy, exactly like a harness without
+# this plugin. Set `proxyUrl` to pin one explicitly.
+- insert:
+    - id: dsh-proxy-zero
+      name: dsh-proxy-zero
+      config:
+        proxyUrl: ''
+        noProxy: ''
