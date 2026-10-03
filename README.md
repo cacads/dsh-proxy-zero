@@ -101,11 +101,21 @@ await agent.close()                      // 关闭自己创建的 agent
 
 ### 安装
 
+从 GitHub 安装（推荐，来源可追溯；`dsh` 会把它自动登记进 `dsh.profile.bundles`）：
+
+```powershell
+dsh plugin --profile desktop add github:cacads/dsh-proxy-zero
+```
+
+从本地源码安装（改代码即时生效，`link:` 形态）：
+
 ```powershell
 dsh plugin --profile desktop add "C:\Users\admin\OneDrive - cacads\Code\DSHCustom\plugin\dsh-proxy-zero"
 ```
 
 `--profile` 换成目标 profile（本机唯一活 profile 是 `desktop`）。
+
+> ⚠️ `github:` spec 锁 commit：改了源码必须 `git push` 后重新 `add`，`dsh plugin update` 不会拉新提交（与本工作区其余 `github:` 插件同一口径）。
 
 **重启 DSH 桌面应用**后生效。原因是代理策略在启动期安装，插件在 profile 装载阶段挂载；重启后进程内才会出现本插件那一层。
 
@@ -117,14 +127,16 @@ dsh plugin --profile desktop add "C:\Users\admin\OneDrive - cacads\Code\DSHCusto
 ### 卸载
 
 ```powershell
-pwsh -File "<插件目录>\tools\uninstall.ps1"
+pwsh -File "C:\Users\admin\.dsh\profiles\desktop\node_modules\dsh-proxy-zero\tools\uninstall.ps1"
 ```
+
+（从本地源码安装时，脚本在工作区那份源码的 `tools\` 里。）
 
 它等价于：
 
 ```powershell
 dsh plugin --profile desktop remove dsh-proxy-zero
-# 再删掉 link: 留下的联接
+# 再删掉安装留下的 node_modules 联接/目录
 [System.IO.Directory]::Delete("$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-proxy-zero", $false)
 ```
 

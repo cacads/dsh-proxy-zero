@@ -12,7 +12,8 @@
     "index.js",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "tools"
   ],
   "keywords": [
     "deepseek-harness",
