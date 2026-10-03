@@ -303,7 +303,41 @@ dsh plugin --profile desktop remove dsh-proxy-zero
 
 ---
 
-## 九、文件清单
+## 九、真机实测记录（2026-10-03）
+
+在装好插件、并在 profile 里配 `proxyUrl: http://127.0.0.1:7897` 后重启应用，实测：
+
+| 观测 | 结果 |
+| --- | --- |
+| `web_fetch` 取 `https://raw.githubusercontent.com/cacads/dsh-proxy-zero/main/README.md` | **HTTP 200**，返回仓库 README 正文 |
+| `web_fetch` 取 `https://api.github.com/repos/cacads/dsh-proxy-zero` | HTTP **403**，响应体为 `API rate limit exceeded for 134.195.101.74` |
+
+**为什么这是"插件确实生效"的决定性证据**，而不是"网络恰好通了"：
+
+`dsh-web-fetch-http` 的取数路径只有两条分支（`lib/index.js:495-509`）：
+
+```js
+const route = proxyRouteFor(url);
+if (route.proxied && !isNonPublicIpLiteral(url.hostname))
+  return await publicHttpNetwork.requestVia(route.dispatcher, url, headers, signal);  // 分支A：不解析地址
+const addresses = await this.resolveAddresses(url.hostname, signal);                   // 分支B：解析地址
+return await publicHttpNetwork.request(url, addresses, headers, signal);
+```
+
+本机 DNS 处于 Clash 的 `fake-ip` 模式，任何域名都解析成 `198.18.x.x`，分支 B 必然抛 `WEB_BLOCKED_URL`（`resolves to a non-public IP address`）。所以拿到 200 **只能是分支 A**，即 `route.proxied === true` —— 而启动器没有设置任何代理环境变量，`proxyRouteFor` 在插件装入策略前恒返回 `direct`。同一调用在配置前后分别是：
+
+```
+13:59  未配 proxyUrl → Error: URL hostname "raw.githubusercontent.com" resolves to a non-public IP address
+14:03  配好并重启后 → HTTP 200（README 正文）
+```
+
+> ⚠️ **一个容易误判的点**：本机 TUN 模式下，"直连"流量同样被 Clash 接管，因此**出口 IP 与走代理时相同**（实测两者都是 `134.195.101.74`）。所以 **出口 IP 不能用来判断插件是否生效** —— 上表中的 `134.195.101.74` 只是顺带说明请求确实从代理节点出去了，判据本身是"分支 A 可达"。
+
+> ⚠️ **出口质量**：该共享节点存在约 20–40% 的 TLS 握手抖动（`curl -x` 直接复测亦同），表现为偶发失败、重试即通；另有 GitHub 未认证 API 的共享 IP 限额（上表 403 即此）。二者都与插件无关。
+
+---
+
+## 十、文件清单
 
 ```
 index.js                插件本体（无依赖、纯 ESM）
