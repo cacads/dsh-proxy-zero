@@ -281,12 +281,29 @@ dsh plugin --profile desktop remove dsh-proxy-zero
 2. **代理可用性不做检测。** 不探测端口、不测连通性、不解析 PAC。代理坏了请修代理；插件的失败语义是"什么都不做"，绝不破坏已经可用的直连。
 3. **不覆盖 Telemetry。** `dsh-session-telemetry-otel` 走 Node 的 `http`，与上游行为一致，本插件不改变它。
 4. **凭据明文。** 代理 URL 里的用户名密码会同时进入 `process.env`（因而也进入之后派生的子进程）。
-5. **尚未在真实应用里目视确认。** 本插件的运行时行为是在**同一个 Electron 运行时、同一份 `app.asar` 代码**下用验证 A 证明的；真实应用内的确认（设置 → 插件出现该行、宿主日志出现 `proxy installed`）需要重启应用，**这一步没有做**（重启会中断当前会话）。profile 层面的装卸闭环（验证 B）已在真实 profile 上完整跑通。
-6. **`--profile` 名要与实际一致。** 本机唯一活 profile 是 `desktop`（由 Electron 独占管理，`dsh --profile desktop --dump-config` 会被拒，但 `dsh plugin --profile desktop …` 正常）。
+5. **`--profile` 名要与实际一致。** 本机唯一活 profile 是 `desktop`（由 Electron 独占管理，`dsh --profile desktop --dump-config` 会被拒，但 `dsh plugin --profile desktop …` 正常）。
+6. **代理来源必须先存在，插件才会激活。** 发现顺序是"显式 `proxyUrl` → 启动环境 → Windows 系统代理"。三者都为空时插件正确地什么都不做（`no usable proxy … staying direct`），`web_fetch` 的 `resolves to a non-public IP address` 也就照旧。要激活必须给一个来源——多数人的情况是 Clash 关着系统代理（TUN 模式下常见），那就得显式配 `proxyUrl`。
 
 ---
 
-## 八、文件清单
+## 九、Harness 包解析（实现要点）
+
+`@deepseek-ai/dsh-http-proxy` 只存在于安装目录的 `app.asar` 内，**不在 profile 的 `node_modules` 里**；而 asar 归档对 ESM 解析器不透明。实测结论：
+
+- `import "@deepseek-ai/dsh-http-proxy"`（裸名）→ 失败；
+- `createRequire(<目录路径>)` → 失败；
+- `createRequire(<目录>/probe.js)`（**指向文件**）→ 成功；
+- 锚点若被 `dirname()` 截断（例如 `…\app.asar\dsh` → `…\app.asar`）→ 失败。
+
+因此 `index.js` 的 `importHarnessPackage()` 按"插件自身目录 → 宿主 `process.argv` 的各项及其 `dirname` → `process.execPath`"依次尝试，且每个候选都**拼一个 `probe.js` 文件名**再交给 `createRequire`。
+
+在真实桌面宿主里，`process.argv[2]` 就是 `…\resources\app.asar\dsh`（实测宿主命令行），所以**首候选即命中上游实现**，验证脚本走的是原生语义而非降级的 undici 分支。只有当宿主没有这个包时，才退回 `undici` 的 `EnvHttpProxyAgent`。
+
+> 验证 A / B 的"未在真实应用里目视确认"一项已补：重启应用后确认插件已随 profile 加载（`dependencies` + `dsh.profile.bundles` 各多一行，安装体与仓库逐字节一致），且用宿主真实 argv 复现了解析路径。
+
+---
+
+## 十、文件清单
 
 ```
 index.js                插件本体（无依赖、纯 ESM）
