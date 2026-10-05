@@ -7,17 +7,24 @@
 #   2. 删掉 link: 安装留下的 node_modules 联接（DSH 的 remove 不回收它）。
 #
 # 第 2 步只删"联接"本身，不触碰它指向的源码目录。
+#
+# 用法（默认目标 = desktop profile）：
+#   pwsh -File uninstall.ps1
+#   pwsh -File uninstall.ps1 -Profile web            # 换 profile 名
+#   pwsh -File uninstall.ps1 -ProfileDir "D:\p"      # 直接指定 profile 目录
+#   pwsh -File uninstall.ps1 -DryRun                 # 只打印将要做什么
 param(
   [string]$Profile = 'desktop',
+  [string]$ProfileDir,
   [string]$Package = 'dsh-proxy-zero',
   [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
-$profileDir = Join-Path $env:USERPROFILE ".dsh\profiles\$Profile"
-$junction = Join-Path $profileDir "node_modules\$Package"
+if (-not $ProfileDir) { $ProfileDir = Join-Path $env:USERPROFILE ".dsh\profiles\$Profile" }
+$junction = Join-Path $ProfileDir "node_modules\$Package"
 
-if (-not (Test-Path $profileDir)) { throw "profile 不存在: $profileDir" }
+if (-not (Test-Path $ProfileDir)) { throw "profile 不存在: $ProfileDir" }
 if ($DryRun) { Write-Host "[DryRun] 将执行: dsh plugin --profile $Profile remove $Package" }
 
 Write-Host "1) 通过 DSH 管理器卸载 $Package ..."

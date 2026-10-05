@@ -10,10 +10,16 @@
  *   3. running the recorded disposer restores EVERY observed piece of state byte-for-byte;
  *   4. nothing was written to disk, so there is nothing left to clean up.
  *
- * Run it with DSH's own runtime so `@deepseek-ai/dsh-http-proxy` resolves from the app:
+ * The pure parsing rules are covered separately by `tools/unit.test.mjs`
+ * (`node --test`), which needs no Harness runtime.
+ *
+ * Run it with DSH's own runtime so `@deepseek-ai/dsh-http-proxy` resolves from the
+ * app, passing the DSH directory as the argument — without it, resolution starts
+ * from the current directory and the peer package will not be found:
  *
  *   $env:ELECTRON_RUN_AS_NODE=1
- *   & "<install>\DeepSeek Harness.exe" tools/verify.mjs
+ *   & "<install>\DeepSeek Harness.exe" tools/verify.mjs "<install>\resources\app.asar\dsh"
+ *   Remove-Item Env:\ELECTRON_RUN_AS_NODE
  */
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -79,6 +85,27 @@ function describe(state) {
 	return JSON.stringify(state.routes) + "|" + JSON.stringify(state.env) + "|dispatcher:" + String(state.dispatcher?.constructor?.name);
 }
 
+/** A stub Cordis context: records effects and captures every log line. */
+function makeContext() {
+	const effects = [];
+	const logs = [];
+	return {
+		effects,
+		logs,
+		ctx: {
+			logger: {
+				info: (m) => logs.push(m),
+				warn: (m) => logs.push(m),
+				error: (m) => logs.push(m),
+			},
+			effect: (fn, label) => effects.push({ fn, label }),
+		},
+	};
+}
+
+/** The published value of one environment name. */
+const envValue = (name) => process.env[name];
+
 // ---------------------------------------------------------------- stub proxy
 const seen = [];
 const proxy = createServer((req, res) => {
@@ -92,6 +119,8 @@ const proxyUrl = `http://127.0.0.1:${proxyPort}`;
 
 // ------------------------------------------------------------------- before
 for (const name of PROXY_ENV) delete process.env[name];
+// An operator-supplied bypass list, to prove the plugin merges instead of replacing it.
+process.env.NO_PROXY = "*.corp.example,10.0.0.0/8";
 const before = captureState();
 const beforeTree = snapshotTree(PLUGIN_ROOT);
 
@@ -100,17 +129,18 @@ console.log(`  harness proxy pkg : ${resolveHarness("@deepseek-ai/dsh-http-proxy
 console.log(`  baseline          : ${describe(before)}`);
 
 // -------------------------------------------------------------------- apply
-const effects = [];
-const ctx = { logger: { info: (m) => console.log(`    [plugin] ${m}`) }, effect: (fn, label) => effects.push({ fn, label }) };
-
-await plugin.apply(ctx, { proxyUrl });
+const run = makeContext();
+await plugin.apply(run.ctx, { proxyUrl });
 const after = captureState();
+const published = envValue("NO_PROXY") ?? "";
 
 console.log("\n[1] loading the plugin installs the policy");
-ok("recorded exactly one Cordis effect", effects.length === 1, effects[0]?.label ?? "");
+ok("recorded exactly one Cordis effect", run.effects.length === 1, run.effects[0]?.label ?? "");
 ok("global dispatcher replaced", after.dispatcher !== before.dispatcher);
 ok("HTTPS_PROXY published", process.env.HTTPS_PROXY === proxyUrl, String(process.env.HTTPS_PROXY));
-ok("NO_PROXY carries loopback", (process.env.NO_PROXY ?? "").includes("127.0.0.1"), String(process.env.NO_PROXY));
+ok("lowercase http_proxy published too", process.env.http_proxy === proxyUrl, String(process.env.http_proxy));
+ok("NO_PROXY carries loopback", published.includes("127.0.0.1"), published);
+ok("NO_PROXY keeps the operator's own entries", published.includes("*.corp.example"), published);
 ok("proxyRouteFor(api.github.com).proxied === true", after.routes[0] === true);
 ok("loopback stays direct", after.routes[1] === false);
 ok("proxyRouteFor(example.com).proxied === true", after.routes[2] === true);
@@ -120,12 +150,13 @@ const response = await fetch("http://probe.invalid/hello");
 const text = await response.text();
 ok("fetch reached the stub proxy", seen.length > 0, `urls=${JSON.stringify(seen)}`);
 ok("stub answered", text === "stub-proxy-ok", text);
+ok("spawned children inherit a usable proxy", proxyHost.proxyEnvironmentForChild().NODE_USE_ENV_PROXY === "1");
 
 // ------------------------------------------------------------------ dispose
 console.log("\n[3] unloading the plugin restores everything");
 // Cordis calls the effect callback and then the disposer it returns, LIFO.
-// Iterate a copy so `effects` itself stays readable for the assertions below.
-const registered = [...effects];
+// Iterate a copy so `run.effects` itself stays readable for the assertions below.
+const registered = [...run.effects];
 for (const { fn } of registered.reverse()) {
 	const disposer = fn();
 	if (typeof disposer !== "function") throw new Error("effect did not return a disposer");
@@ -135,25 +166,34 @@ const restored = captureState();
 ok("dispatcher restored to the previous instance", restored.dispatcher === before.dispatcher);
 ok("proxy environment restored byte-for-byte", JSON.stringify(restored.env) === JSON.stringify(before.env), describe(restored));
 ok("route decisions restored", JSON.stringify(restored.routes) === JSON.stringify(before.routes));
-ok("no new Cordis effect left behind", effects.length === 1);
+ok("no new Cordis effect left behind", run.effects.length === 1);
 
 console.log("\n[4] nothing was written to disk");
 ok("plugin tree is byte-identical", snapshotTree(PLUGIN_ROOT) === beforeTree);
 
 // -------------------------------------------------------------- extra paths
 console.log("\n[5] failing-safe paths");
-const noProxyCtx = { logger: { info: () => {} }, effect: () => { throw new Error("effect must not be called"); } };
-await plugin.apply(noProxyCtx, {});
-ok("no proxy anywhere: installs nothing, registers no effect", true);
+for (const name of PROXY_ENV) delete process.env[name];
+const unconfigured = makeContext();
+unconfigured.ctx.effect = () => {
+	throw new Error("effect must not be called");
+};
+await plugin.apply(unconfigured.ctx, {});
+ok("no proxy anywhere: installs nothing, registers no effect", unconfigured.logs.some((l) => l.includes("no usable proxy")));
 
 const badEffects = [];
-await plugin.apply({ logger: { info: () => {} }, effect: (fn) => badEffects.push(fn) }, { proxyUrl: "socks5://127.0.0.1:1080" });
+const bad = makeContext();
+bad.ctx.effect = (fn) => badEffects.push(fn);
+await plugin.apply(bad.ctx, { proxyUrl: "socks5://127.0.0.1:1080" });
 ok("SOCKS value is refused, nothing installed", badEffects.length === 0);
+ok("SOCKS refusal says why, in the log", bad.logs.some((l) => l.includes("not a usable http(s) URL")), bad.logs.join(" | "));
 ok("dispatcher untouched by refused value", undici.getGlobalDispatcher() === before.dispatcher);
 
 const envEffects = [];
 process.env.HTTPS_PROXY = proxyUrl;
-await plugin.apply({ logger: { info: () => {} }, effect: (fn) => envEffects.push(fn) }, {});
+const fromEnv = makeContext();
+fromEnv.ctx.effect = (fn) => envEffects.push(fn);
+await plugin.apply(fromEnv.ctx, {});
 await fetch("http://probe2.invalid/env");
 ok("falls back to HTTPS_PROXY when config is empty", envEffects.length === 1 && seen.some((u) => u.includes("probe2")));
 for (const fn of envEffects) {

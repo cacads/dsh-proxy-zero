@@ -2,17 +2,25 @@
 # 用法：pwsh -File fingerprint.ps1 -Mode capture -Name baseline
 #       pwsh -File fingerprint.ps1 -Mode capture -Name installed
 #       pwsh -File fingerprint.ps1 -Mode compare -A baseline -B installed
+# 目标 profile 可用 -Profile 覆盖（默认 desktop）；整条路径可用 -ProfileDir 覆盖，
+# 便于 profile 不在默认位置时核对。
 param(
   [Parameter(Mandatory = $true)][ValidateSet('capture', 'compare')][string]$Mode,
   [string]$Name = 'baseline',
   [string]$A,
-  [string]$B
+  [string]$B,
+  [string]$Profile = 'desktop',
+  [string]$ProfileDir
 )
 
 $ErrorActionPreference = 'Stop'
-$profileDir = Join-Path $env:USERPROFILE '.dsh\profiles\desktop'
+if (-not $ProfileDir) { $ProfileDir = Join-Path $env:USERPROFILE ".dsh\profiles\$Profile" }
 $storeDir = Join-Path $PSScriptRoot '..\fingerprints'
 New-Item -ItemType Directory -Force -Path $storeDir | Out-Null
+
+if (-not (Test-Path (Join-Path $ProfileDir 'package.json'))) {
+  throw "该目录下没有 package.json，请用 -Profile 或 -ProfileDir 指定正确目标: $ProfileDir"
+}
 
 function Get-Fingerprint {
   $result = [ordered]@{}
